@@ -6,7 +6,7 @@ from pandas.util.testing import assert_frame_equal
 
 import atpy.data.cache.influxdb_cache_requests as inf_cache
 from atpy.data.cache.influxdb_cache import update_to_latest, ranges
-from atpy.data.iqfeed.iqfeed_bar_data_provider import *
+import pandas as pd
 from atpy.data.iqfeed.iqfeed_influxdb_cache import *
 from atpy.data.iqfeed.iqfeed_influxdb_cache_requests import get_cache_fundamentals
 from atpy.data.iqfeed.iqfeed_level_1_provider import get_fundamentals
@@ -64,8 +64,8 @@ class TestInfluxDBCache(unittest.TestCase):
             for df1, df2 in zip(data_no_limit, cache_data_no_limit):
                 del df1['total_volume']
                 del df1['number_of_trades']
-                del df1['period_volume']
-                del df2['period_volume']
+                del df1['volume']
+                del df2['volume']
 
                 assert_frame_equal(df1, df2, check_exact=False, check_less_precise=True)
 
@@ -102,7 +102,7 @@ class TestInfluxDBCache(unittest.TestCase):
             cache_data_no_limit = [cache_requests.request(symbol=f.ticker, bgn_prd=datetime.datetime.combine(f.bgn_dt, datetime.datetime.min.time()).astimezone(tz.tzutc()) + relativedelta(microseconds=1)) for f in filters_no_limit]
             for df1, (_, df2) in zip(data_no_limit, cache_data_no_limit):
                 del df1['open_interest']
-                df1 = df1[['open', 'high', 'low', 'close', 'period_volume', 'timestamp', 'symbol']]
+                df1 = df1[['open', 'high', 'low', 'close', 'volume', 'timestamp', 'symbol']]
                 assert_frame_equal(df1, df2)
 
     def test_bars_in_period(self):

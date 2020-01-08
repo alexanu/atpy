@@ -5,6 +5,8 @@ import typing
 import pandas as pd
 
 import atpy.portfolio.order as orders
+from atpy.data.iqfeed.util import get_last_value
+from pyevents.events import EventFilter
 
 
 class MockExchange(object):
@@ -14,33 +16,30 @@ class MockExchange(object):
 
     def __init__(self,
                  listeners,
-                 accept_bars: typing.Callable = None,
-                 accept_ticks: typing.Callable = None,
+                 order_requests_event_stream=None,
+                 bar_event_stream=None,
+                 tick_event_stream=None,
                  order_processor: typing.Callable = None,
                  commission_loss: typing.Callable = None):
         """
-        Add source for data generation
-        :param listeners: listeners
-        :param accept_bars: treat event like bar data. Has to return the bar dataframe. If None, then the event is not accepted
-        :param accept_ticks: treat event like tick data. Has to return the tick dataframe. If None, then the event is not accepted
+        :param order_requests_event_stream: event stream for order events
+        :param bar_event_stream: event stream for bar data events
+        :param tick_event_stream: event stream for tick data events
         :param order_processor: a function which takes the current bar/tick volume and price and the current order.
                                 It applies some logic to return allowed volume and price for the order, given the current conditions.
                                 This function might apply slippage and so on
         :param commission_loss: apply commission loss to the price
         """
 
-        if accept_bars is not None:
-            self.accept_bars = accept_bars
-        else:
-            self.accept_bars = lambda e: e['data'] if e['type'] == 'bar' else None
+        order_requests_event_stream += self.process_order_request
 
-        if accept_ticks is not None:
-            self.accept_ticks = accept_ticks
-        else:
-            self.accept_ticks = lambda e: e['data'] if e['type'] == 'level_1_tick' else None
+        if bar_event_stream is not None:
+            bar_event_stream += self.process_bar_data
+
+        if tick_event_stream is not None:
+            tick_event_stream += self.process_tick_data
 
         self.listeners = listeners
-        self.listeners += self.on_event
 
         self.order_processor = order_processor if order_processor is not None else lambda order, price, volume: (price, volume)
         self.commission_loss = commission_loss if commission_loss is not None else lambda o: 0
@@ -52,18 +51,11 @@ class MockExchange(object):
         with self._lock:
             self._pending_orders.append(order)
 
-    def on_event(self, event):
-        if event['type'] == 'order_request':
-            self.process_order_request(event['data'])
-        elif self.accept_ticks(event) is not None:
-            self.process_tick_data(self.accept_ticks(event))
-        elif self.accept_bars(event) is not None:
-            self.process_bar_data(self.accept_bars(event))
-
     def process_tick_data(self, data):
         with self._lock:
             matching_orders = [o for o in self._pending_orders if o.symbol == data['symbol']]
             for o in matching_orders:
+                data = get_last_value(data)
                 if o.order_type == orders.Type.BUY:
                     if 'tick_id' in data:
                         price, volume = self.order_processor(o, data['ask'], data['last_size'])
@@ -77,7 +69,6 @@ class MockExchange(object):
                         o.add_position(volume, price)
 
                     o.commission = self.commission_loss(o)
-
                 elif o.order_type == orders.Type.SELL:
                     if 'tick_id' in data:
                         price, volume = self.order_processor(o, data['bid'], data['last_size'])
@@ -90,7 +81,6 @@ class MockExchange(object):
                         o.add_position(price, volume)
 
                     o.commission = self.commission_loss(o)
-
                 if o.fulfill_time is not None:
                     self._pending_orders.remove(o)
 
@@ -100,14 +90,18 @@ class MockExchange(object):
 
     def process_bar_data(self, data):
         with self._lock:
+            symbols = data.index.get_level_values(level='symbol')
+
             symbol_ind = data.index.names.index('symbol')
 
-            for o in [o for o in self._pending_orders if o.symbol in data.index.levels[symbol_ind]]:
-                slc = data.loc[pd.IndexSlice[:, o.symbol], :]
-                if not slc.empty:
-                    price, volume = self.order_processor(o, slc.iloc[-1]['close'], slc.iloc[-1]['period_volume'])
+            for o in [o for o in self._pending_orders if o.symbol in symbols]:
+                ix = pd.IndexSlice[:, o.symbol] if symbol_ind == 1 else pd.IndexSlice[o.symbol, :]
+                slc = data.loc[ix, :]
 
-                    o.add_position(volume, price)
+                if not slc.empty:
+                    price, volume = self.order_processor(o, slc.iloc[-1]['close'], slc.iloc[-1]['volume'])
+
+                    o.add_position(min(o.quantity - o.obtained_quantity, volume), price)
 
                     o.commission = self.commission_loss(o)
 
@@ -116,6 +110,11 @@ class MockExchange(object):
                         logging.getLogger(__name__).info("Order fulfilled: " + str(o))
 
                         self.listeners({'type': 'order_fulfilled', 'data': o})
+
+    def fulfilled_orders_stream(self):
+        return EventFilter(listeners=self.listeners,
+                           event_filter=lambda e: True if 'type' in e and e['type'] == 'order_fulfilled' else False,
+                           event_transformer=lambda e: (e['data'],))
 
 
 class StaticSlippageLoss:

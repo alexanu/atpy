@@ -76,10 +76,11 @@ class BarsFilter(NamedTuple):
     interval_type: str
     max_bars: int
     ascend: bool
+    label_at_begin: int
     timeout: int
 
 
-BarsFilter.__new__.__defaults__ = (True, None)
+BarsFilter.__new__.__defaults__ = (True, 0, None)
 
 
 class BarsForDaysFilter(NamedTuple):
@@ -95,10 +96,11 @@ class BarsForDaysFilter(NamedTuple):
     end_flt: datetime.time
     ascend: bool
     max_bars: int
+    label_at_begin: int
     timeout: int
 
 
-BarsForDaysFilter.__new__.__defaults__ = (None, None, True, None, None)
+BarsForDaysFilter.__new__.__defaults__ = (None, None, True, None, 0, None)
 
 
 class BarsInPeriodFilter(NamedTuple):
@@ -115,10 +117,11 @@ class BarsInPeriodFilter(NamedTuple):
     end_flt: datetime.time
     ascend: bool
     max_ticks: int
+    label_at_begin: int
     timeout: int
 
 
-BarsInPeriodFilter.__new__.__defaults__ = (None, None, True, None, None)
+BarsInPeriodFilter.__new__.__defaults__ = (None, None, True, None, 0, None)
 
 
 class BarsDailyFilter(NamedTuple):
@@ -320,7 +323,7 @@ class IQFeedHistoryProvider(object):
                 signals = pd.concat(signals)
                 signals.index.set_names('symbol', level=0, inplace=True)
 
-                for symbol in signals.index.get_level_values('symbol').unique():
+                for symbol in signals.index.levels[0].unique():
                     if 0 in signals.loc[symbol, 'open'].values:
                         logging.getLogger(__name__).warning(symbol + " contains 0 in the Open column before timestamp sync")
 
@@ -331,7 +334,7 @@ class IQFeedHistoryProvider(object):
                 signals.reset_index(inplace=True)
                 signals.set_index(multi_index, inplace=True)
 
-                for c in [c for c in ['period_volume', 'number_of_trades'] if c in signals.columns]:
+                for c in [c for c in ['volume', 'number_of_trades'] if c in signals.columns]:
                     signals[c].fillna(0, inplace=True)
 
                 if 'close' in signals.columns:
@@ -358,7 +361,7 @@ class IQFeedHistoryProvider(object):
 
                 zero_values = list()
 
-                for symbol in signals.index.get_level_values('symbol').unique():
+                for symbol in signals.index.levels[0].unique():
                     if 0 in signals.loc[symbol, 'open'].values:
                         logging.getLogger(__name__).warning(symbol + " contains 0 in the Open column after timestamp sync")
                         zero_values.append(symbol)
@@ -439,7 +442,7 @@ class IQFeedHistoryProvider(object):
         result.set_index('timestamp' + sf, inplace=True, drop=False)
         result.drop(['date', 'time'], axis=1, inplace=True)
 
-        result.rename({"high_p": "high" + sf, "low_p": "low" + sf, "open_p": "open" + sf, "close_p": "close" + sf, "tot_vlm": "total_volume" + sf, "prd_vlm": "period_volume" + sf, "num_trds": "number_of_trades" + sf}, axis="columns",
+        result.rename({"high_p": "high" + sf, "low_p": "low" + sf, "open_p": "open" + sf, "close_p": "close" + sf, "tot_vlm": "total_volume" + sf, "prd_vlm": "volume" + sf, "num_trds": "number_of_trades" + sf}, axis="columns",
                       copy=False, inplace=True)
         result['symbol'] = data_filter.ticker
 
@@ -448,7 +451,7 @@ class IQFeedHistoryProvider(object):
     def _process_daily(self, data, data_filter):
         result = pd.DataFrame(data)
         sf = self.key_suffix
-        result.rename({"date": "timestamp" + sf, "high_p": "high" + sf, "low_p": "low" + sf, "open_p": "open" + sf, "close_p": "close" + sf, "prd_vlm": "period_volume" + sf, "open_int": "open_interest" + sf}, axis="columns", copy=False,
+        result.rename({"date": "timestamp" + sf, "high_p": "high" + sf, "low_p": "low" + sf, "open_p": "open" + sf, "close_p": "close" + sf, "prd_vlm": "volume" + sf, "open_int": "open_interest" + sf}, axis="columns", copy=False,
                       inplace=True)
 
         result['timestamp' + sf] = pd.Index(result['timestamp' + sf]).tz_localize('US/Eastern').tz_convert('UTC')

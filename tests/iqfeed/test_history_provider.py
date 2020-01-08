@@ -1,7 +1,8 @@
 import unittest
 
 from atpy.data.iqfeed.iqfeed_history_provider import *
-from pyevents.events import AsyncListeners
+from atpy.data.util import resample_bars
+from pyevents.events import AsyncListeners, SyncListeners
 
 
 class TestIQFeedHistory(unittest.TestCase):
@@ -158,7 +159,7 @@ class TestIQFeedHistory(unittest.TestCase):
         filter_provider = DefaultFilterProvider()
         filter_provider += BarsFilter(ticker=["IBM", "AAPL", "GOOG"], interval_len=60, interval_type='s', max_bars=batch_len)
 
-        listeners = AsyncListeners()
+        listeners = SyncListeners()
 
         with IQFeedHistoryEvents(listeners=listeners, fire_batches=True, filter_provider=filter_provider, num_connections=2) as listener, listener.batch_provider() as provider:
             e1 = threading.Event()
@@ -166,6 +167,7 @@ class TestIQFeedHistory(unittest.TestCase):
             def process_batch_listener_column(event):
                 if event['type'] == 'bar_batch':
                     batch = event['data']
+                    batch.index.get_level_values('timestamp')
                     self.assertEqual(len(batch.index.levels), 2)
                     self.assertEqual(len(batch.index.levels[0]), 3)
 
@@ -234,6 +236,13 @@ class TestIQFeedHistory(unittest.TestCase):
 
                 if i == 1:
                     break
+
+    def test_resample(self):
+        with IQFeedHistoryProvider() as provider:
+            df = provider.request_data(BarsFilter(ticker=["IBM", "AAPL", "GOOG"], interval_len=60, interval_type='s', max_bars=100), sync_timestamps=False)
+            resampled_df = resample_bars(df, '5min')
+            self.assertLess(len(resampled_df), len(df))
+            self.assertEqual(df['volume'].sum(), resampled_df['volume'].sum())
 
     def test_daily(self):
         filter_provider = DefaultFilterProvider()
@@ -369,7 +378,7 @@ class TestIQFeedHistory(unittest.TestCase):
         with IQFeedHistoryProvider(num_connections=2) as history:
             end_prd = datetime.datetime(2017, 5, 1)
 
-            # test multisymbol request
+            # test multi-symbol request
             requested_data = history.request_data(BarsInPeriodFilter(ticker=["AAPL", "IBM"], bgn_prd=datetime.datetime(2017, 4, 1), end_prd=end_prd, interval_len=3600, ascend=True, interval_type='s'), sync_timestamps=False)
             self.assertNotEqual(requested_data.loc['AAPL'].shape, requested_data.loc['IBM'].shape)
 
